@@ -13,7 +13,6 @@ const { SECRET_KEY_DEV } = require('../utils/constants');
 // Импорты ошибок из файла errors
 const DuplicateDataError = require('../errors/DuplicateDataError');
 const InvalidDataError = require('../errors/InvalidDataError');
-const AuthenticationError = require('../errors/AuthenticationError');
 const NotFoundPageError = require('../errors/NotFoundPageError');
 
 // Регистрация пользователя
