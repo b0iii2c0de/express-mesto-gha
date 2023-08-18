@@ -1,141 +1,205 @@
 // Создание константы User из модели user для дальнейшего
 // использования в функциях
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const User = require('../models/user');
 
 // Импорты констант статусов ответа сервера из файла constants.js
-const { OK_STATUS_CODE } = require('../utils/constants');
 const { HTTP_CREATED_STATUS_CODE } = require('../utils/constants');
-const { HTTP_BAD_REQUEST_STATUS_CODE } = require('../utils/constants');
-const { NOT_FOUND_PAGE_STATUS_CODE } = require('../utils/constants');
-const { SERVER_ERROR_STATUS_CODE } = require('../utils/constants');
+
+// Импорт секретного ключа из файла constants.js
+const { SECRET_KEY_DEV } = require('../utils/constants');
+
+// Импорты ошибок из файла errors
+const DuplicateDataError = require('../errors/DuplicateDataError');
+const InvalidDataError = require('../errors/InvalidDataError');
+const AuthenticationError = require('../errors/AuthenticationError');
+const NotFoundPageError = require('../errors/NotFoundPageError');
+
+// Регистрация пользователя
+function registration(req, res, next) {
+  const {
+    email, password, name, about, avatar,
+  } = req.body;
+
+  bcrypt
+    .hash(password, 10)
+    .then((hash) => User.create({
+      email,
+      password: hash,
+      name,
+      about,
+      avatar,
+    }))
+    .then((user) => {
+      const { _id } = user;
+
+      return res.status(HTTP_CREATED_STATUS_CODE).send({
+        email,
+        name,
+        about,
+        avatar,
+        _id,
+      });
+    })
+    .catch((err) => {
+      if (err.code === 11000) {
+        next(
+          new DuplicateDataError(
+            'Пользователь с данным электронным адресом уже зарегистрирован',
+          ),
+        );
+      } else if (err.name === 'ValidationError') {
+        next(
+          new InvalidDataError(
+            'Передача некорректных данные при регистрации пользователя',
+          ),
+        );
+      } else {
+        next(err);
+      }
+    });
+}
+
+// Логин пользователя
+function login(req, res, next) {
+  const { email, password } = req.body;
+
+  User.findUserByCredentials(email, password)
+    .then(({ _id: userId }) => {
+      const token = jwt.sign({ userId }, SECRET_KEY_DEV, {
+        expiresIn: '7d',
+      });
+
+      return res.send({ _id: token });
+    })
+    .catch(() => {
+      throw new AuthenticationError('Неправильная почта или пароль');
+    })
+    .catch(next);
+}
 
 // Получение пользователей из базы данных mongodb
-module.exports.getUsers = (_, res) => {
+function getUsers(_, res, next) {
   User.find({})
-  // Когда пользователи успешно найдены, получаем 200 статус ответа от сервера
-    .then((users) => res.send(users))
-  // Если произошла ошибка при поиске пользователей, отправляется ответ ошибки сервера
-    .catch(() => res.status(SERVER_ERROR_STATUS_CODE).send({
-      message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-    }));
-};
+    // Когда пользователи успешно найдены, получаем 200 статус ответа от сервера
+    .then((users) => res.send({ users }))
+    // Если произошла ошибка
+    .catch(next);
+}
 
 // Пользователь по его id
-module.exports.getUserById = (req, res) => {
-  User.findById(req.params.userId)
-    .orFail()
-    // Когда пользователь успешно найдены по _id, получаем 200 статус ответа от сервера
-    .then((user) => res.status(OK_STATUS_CODE).send(user))
-    // Если произошла ошибка при поиске пользователя по _id, отрабатываем ошибки
+function getUserById(req, res, next) {
+  const { id } = req.params;
+
+  User.findById(id)
+
+    .then((user) => {
+      if (user) return res.send({ user });
+
+      throw new NotFoundPageError('Пользователь c указанным id не найден');
+    })
     .catch((err) => {
       if (err.name === 'CastError') {
-        return res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message: 'При поиске пользователя были переданы некорректные данные',
-        });
-      }
-
-      if (err.name === 'DocumentNotFoundError') {
-        return res.status(NOT_FOUND_PAGE_STATUS_CODE).send({
-          message: 'Пользователь c указанным _id не найден',
-        });
-      }
-
-      return res.status(SERVER_ERROR_STATUS_CODE).send({
-        message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-      });
-    });
-};
-
-// Создание пользователя
-module.exports.createNewUser = (req, res) => {
-  const { name, about, avatar } = req.body;
-  User.create({ name, about, avatar })
-  // Когда пользователь успешно создан, получаем 200 статус ответа от сервера
-    .then((user) => res.status(HTTP_CREATED_STATUS_CODE).send(user))
-  // Если произошла ошибка при создании пользователя, отрабатываем ошибки
-    .catch((err) => {
-      if (err.name === 'ValidationError') {
-        res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message:
-            'При создании пользователя были переданы некорректные данные',
-        });
+        next(new InvalidDataError('Передача некорректного id'));
       } else {
-        res.status(SERVER_ERROR_STATUS_CODE).send({
-          message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-        });
+        next(err);
       }
     });
-};
+}
+
+// Пользователь
+function getUserInfo(req, res, next) {
+  const { userId } = req.user;
+
+  User.findById(userId)
+    .then((user) => {
+      if (user) return res.send({ user });
+
+      throw new NotFoundPageError('Пользователь c указанным id не найден');
+    })
+    .catch((err) => {
+      if (err.name === 'CastError') {
+        next(new InvalidDataError('Передача некорректного id'));
+      } else {
+        next(err);
+      }
+    });
+}
 
 // Редактирование аватара пользователя
-module.exports.updateAvatar = (req, res) => {
+function updateAvatar(req, res, next) {
   const { avatar } = req.body;
+  const { userId } = req.user;
 
   User.findByIdAndUpdate(
-    req.user._id,
-    { avatar },
-    { new: true, runValidators: true },
+    userId,
+    {
+      avatar,
+    },
+    {
+      new: true,
+      runValidators: true,
+    },
   )
-    .orFail()
-    // Когда аватар пользователя успешно обновлён, получаем 200 статус ответа от сервера
-    .then((user) => res.status(OK_STATUS_CODE).send(user))
-    // Когда при попытке обновить аватар пользователя произошла ошибка, отрабатываем ошибки
+    .then((user) => {
+      if (user) return res.send({ user });
+
+      throw new NotFoundPageError('Пользователь c указанным id не найден');
+    })
     .catch((err) => {
-      if (err.name === 'DocumentNotFoundError') {
-        return res.status(NOT_FOUND_PAGE_STATUS_CODE).send({
-          message: 'Данный пользователь не был найден',
-        });
-      }
-
-      if (err.name === 'ValidationError') {
-        const validationErrors = Object.values(err.errors).map(
-          (error) => error.message,
+      if (err.name === 'ValidationError' || err.name === 'CastError') {
+        next(
+          new InvalidDataError(
+            'Передача некорректных данных при попытке обновления аватара',
+          ),
         );
-        return res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message:
-            'При обновлении аватара были переданы некорректные данные',
-          validationErrors,
-        });
+      } else {
+        next(err);
       }
-
-      return res.status(SERVER_ERROR_STATUS_CODE).send({
-        message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-      });
     });
-};
+}
 
-// Редактирование профиля пользователя
-module.exports.updateProfile = (req, res) => {
+// редактирование данных пользователя
+function updateProfile(req, res, next) {
   const { name, about } = req.body;
+  const { userId } = req.user;
 
   User.findByIdAndUpdate(
-    req.user._id,
-    { name, about },
-    { new: true, runValidators: true },
+    userId,
+    {
+      name,
+      about,
+    },
+    {
+      new: true,
+      runValidators: true,
+    },
   )
-    // Когда данные пользователя успешно обновлёны, получаем 200 статус ответа от сервера
-    .then((user) => res.status(OK_STATUS_CODE).send(user))
-    // Когда при попытке обновить данные пользователя произошла ошибка, отрабатываем ошибки
+    .then((user) => {
+      if (user) return res.send({ user });
+
+      throw new NotFoundPageError('Пользователь c указанным id не найден');
+    })
     .catch((err) => {
-      if (err.name === 'DocumentNotFoundError') {
-        return res.status(NOT_FOUND_PAGE_STATUS_CODE).send({
-          message: 'Данный пользователь не найден',
-        });
-      }
-
-      if (err.name === 'ValidationError') {
-        const validationErrors = Object.values(err.errors).map(
-          (error) => error.message,
+      if (err.name === 'ValidationError' || err.name === 'CastError') {
+        next(
+          new InvalidDataError(
+            'Передача некорректных данных при попытке обновления профиля',
+          ),
         );
-        return res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message:
-            'При обновлении профиля были переданы некорректные данные',
-          validationErrors,
-        });
+      } else {
+        next(err);
       }
-
-      return res.status(SERVER_ERROR_STATUS_CODE).send({
-        message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-      });
     });
+}
+
+module.exports = {
+  registration,
+  login,
+  getUsers,
+  getUserById,
+  getUserInfo,
+  updateProfile,
+  updateAvatar,
 };

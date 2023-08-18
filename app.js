@@ -1,46 +1,50 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const helmet = require('helmet');
-const routes = require('./routes/router');
+const bodyParser = require('body-parser');
+const { errors } = require('celebrate');
+const { PORT } = require('./utils/constants');
+const limiter = require('./middlewares/rateLimiter');
+const routeSignup = require('./routes/signup');
+const routeSignin = require('./routes/signin');
+const auth = require('./middlewares/auth');
+const NotFoundPageError = require('./errors/NotFoundPageError');
+const errorHandler = require('./middlewares/errorHandler');
+const routeUsers = require('./routes/users');
+const routeCards = require('./routes/cards');
 
-// Определение порта для работы бекенда
-const { PORT = 3000 } = process.env;
+const URL = 'mongodb://127.0.0.1:27017/mestodb';
 
-// Создание экземпляра приложения Express.js
-const app = express();
+mongoose.set('strictQuery', true);
 
-// Подключение helmet используется для применения helmet
-// в качестве промежуточного обработчика (middleware) в приложении Express.js.
-app.use(helmet());
-
-// Отключение заголовка "x-powered-by"
-app.disable('x-powered-by');
-
-// Парсинг JSON-запросов
-app.use(express.json());
-
-// Установка значения для свойства user в объекте req
-app.use((req, res, next) => {
-  req.user = {
-    _id: '64afce8fd1662107bfda7b13',
-  };
-  next();
-});
-
-// Подключение маршрутов приложения
-app.use(routes);
-
-// Подключение к базе данных Mongodb и таблице mestodb
 mongoose
-  .connect('mongodb://127.0.0.1:27017/mestodb')
+  .connect(URL)
   .then(() => {
     console.log('БД успешно подключена');
   })
   .catch(() => {
-    console.log('Не удается подключиться к БД, проверьте подключение');
+    console.log('Не удалось подключиться к БД, проверьте правильность подключения');
   });
 
-// Запуск сервера на 3000 порту
-app.listen(PORT, () => {
-  console.log(`App listening on port ${PORT}`);
-});
+const app = express();
+
+app.use(helmet());
+
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+app.use(limiter);
+
+app.use('/', routeSignup);
+app.use('/', routeSignin);
+
+app.use(auth);
+
+app.use('/users', routeUsers);
+app.use('/cards', routeCards);
+
+app.use((req, res, next) => next(new NotFoundPageError('Запрашиваемый ресурс не найден.')));
+app.use(errors());
+app.use(errorHandler);
+
+app.listen(PORT);

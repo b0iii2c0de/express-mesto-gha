@@ -3,125 +3,143 @@
 const Card = require('../models/card');
 
 // Импорты констант статусов ответа сервера из файла constants.js
-const { OK_STATUS_CODE } = require('../utils/constants');
 const { HTTP_CREATED_STATUS_CODE } = require('../utils/constants');
-const { HTTP_BAD_REQUEST_STATUS_CODE } = require('../utils/constants');
-const { NOT_FOUND_PAGE_STATUS_CODE } = require('../utils/constants');
-const { SERVER_ERROR_STATUS_CODE } = require('../utils/constants');
+
+// Импорты ошибок из файла errors
+const AccessDeniedError = require('../errors/AccessDeniedError');
+const InvalidDataError = require('../errors/InvalidDataError');
+const NotFoundPageError = require('../errors/NotFoundPageError');
 
 // Получение массива карточек
-module.exports.getCards = (req, res) => {
+function getCards(_, res, next) {
   Card.find({})
-  // Когда карточки успешно найдены, получаем 200 статус ответа от сервера
-    .then((cards) => res.status(OK_STATUS_CODE).send(cards))
-  // Если произошла ошибка при поиске карточек, отправляется ответ ошибка сервера
-    .catch(() => res.status(SERVER_ERROR_STATUS_CODE).send({
-      message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-    }));
-};
+    .then((cards) => res.send({ data: cards }))
+    .catch(next);
+}
 
 // Создание новой карточки
-module.exports.createNewCard = (req, res) => {
+function createNewCard(req, res, next) {
   const { name, link } = req.body;
-  const owner = req.user._id;
-  Card.create({ name, link, owner })
-  // Когда карточка успешно создана, получаем 200 статус ответа от сервера
-    .then((card) => res.status(HTTP_CREATED_STATUS_CODE).send(card))
-  // Если произошла ошибка при создании карточки, отрабатываем ошибки
+  const { userId } = req.user;
+
+  Card.create({ name, link, owner: userId })
+    .then((card) => res.status(HTTP_CREATED_STATUS_CODE).send({ data: card }))
     .catch((err) => {
       if (err.name === 'ValidationError') {
-        res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message:
-            'При создании новой карточки были переданы некорректные данные',
-        });
+        next(
+          new InvalidDataError(
+            'Передача некорректных данных, при попытке добавления новой карточки на страницу.',
+          ),
+        );
       } else {
-        res.status(SERVER_ERROR_STATUS_CODE).send({
-          message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-        });
+        next(err);
       }
     });
-};
+}
 
 // Лайк карточки
-module.exports.addLikeCard = (req, res) => {
+function addLikeCard(req, res, next) {
+  const { cardId } = req.params;
+  const { userId } = req.user;
+
   Card.findByIdAndUpdate(
-    req.params.cardId,
-    { $addToSet: { likes: req.user._id } },
-    { new: true },
+    cardId,
+    {
+      $addToSet: {
+        likes: userId,
+      },
+    },
+    {
+      new: true,
+    },
   )
-    .orFail()
-    // Когда лайк успешно поставлен, получаем 200 статус ответа от сервера
-    .then((card) => res.status(OK_STATUS_CODE).send(card))
-    // Если произошла ошибка при постановке лайка, отрабатываем ошибки
+    .then((card) => {
+      if (card) return res.send({ data: card });
+
+      throw new NotFoundPageError('Карточка с данным ID не найдена');
+    })
     .catch((err) => {
-      if (err.name === 'DocumentNotFoundError') {
-        return res
-          .status(NOT_FOUND_PAGE_STATUS_CODE)
-          .send({ message: 'Карточка c передаваемым id не найдена' });
+      if (err.name === 'ValidationError' || err.name === 'CastError') {
+        next(
+          new InvalidDataError(
+            'Передача некорректных данных при попытке поставить лайк.',
+          ),
+        );
+      } else {
+        next(err);
       }
-      if (err.name === 'CastError') {
-        return res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message: 'При попытке поставить лайк на карточку переданы некорректные данные',
-        });
-      }
-      return res.status(SERVER_ERROR_STATUS_CODE).send({
-        message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-      });
     });
-};
+}
 
 // Снятие лайка с карточки
-module.exports.removeLikeCard = (req, res) => {
+function removeLikeCard(req, res, next) {
+  const { cardId } = req.params;
+  const { userId } = req.user;
+
   Card.findByIdAndUpdate(
-    req.params.cardId,
-    { $pull: { likes: req.user._id } },
-    { new: true },
+    cardId,
+    {
+      $pull: {
+        likes: userId,
+      },
+    },
+    {
+      new: true,
+    },
   )
-    .orFail()
-    // Когда лайк успешно снят, получаем 200 статус ответа от сервера
-    .then((card) => res.status(OK_STATUS_CODE).send(card))
-    // Если произошла ошибка при снятии лайка, отрабатываем ошибки
+    .then((card) => {
+      if (card) return res.send({ data: card });
+
+      throw new NotFoundPageError('Карточка c передаваемым ID не найдена');
+    })
     .catch((err) => {
-      if (err.name === 'DocumentNotFoundError') {
-        return res
-          .status(NOT_FOUND_PAGE_STATUS_CODE)
-          .send({ message: 'Карточка c указанным id не найдена' });
+      if (err.name === 'ValidationError' || err.name === 'CastError') {
+        next(
+          new InvalidDataError(
+            'Передача некорректных данных при попытке удаления лайка с карточки.',
+          ),
+        );
+      } else {
+        next(err);
       }
-      if (err.name === 'CastError') {
-        return res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message:
-            'При попытке снять лайк с карточки переданы некорректные данные',
-        });
-      }
-      return res.status(SERVER_ERROR_STATUS_CODE).send({
-        message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-      });
     });
-};
+}
 
 // Удаление карточки из массива
-module.exports.deleteCard = (req, res) => {
-  Card.findByIdAndRemove(req.params.cardId)
-  // Когда карточка успешно удалена, получаем 200 статус ответа от сервера
-  // Если карточки не существует, отрабатываем ошибку
+function deleteCard(req, res, next) {
+  const { id: cardId } = req.params;
+  const { userId } = req.user;
+
+  Card.findById({
+    _id: cardId,
+  })
     .then((card) => {
       if (!card) {
-        return res
-          .status(NOT_FOUND_PAGE_STATUS_CODE)
-          .send({ message: 'Карточка c указанным id не найдена' });
+        throw new NotFoundPageError('Карточка c передаваемым ID не найдена');
       }
-      return res.status(OK_STATUS_CODE).send(card);
+
+      const { owner: cardOwnerId } = card;
+
+      if (cardOwnerId.valueOf() !== userId) {
+        throw new AccessDeniedError('Нет прав доступа');
+      }
+
+      return Card.findByIdAndDelete(cardId);
     })
-    // Если произошла ошибка при удалении карточки, отрабатываем ошибки
-    .catch((err) => {
-      if (err.name === 'CastError') {
-        res.status(HTTP_BAD_REQUEST_STATUS_CODE).send({
-          message: 'При попытке удалить карточку переданы некорректные данные',
-        });
-      } else {
-        res.status(SERVER_ERROR_STATUS_CODE).send({
-          message: 'На сервере произошла ошибка, статус ответа сервера - 500.',
-        });
+    .then((deletedCard) => {
+      if (!deletedCard) {
+        throw new NotFoundPageError('Данная карточка была удалена');
       }
-    });
+
+      res.send({ data: deletedCard });
+    })
+    .catch(next);
+}
+
+module.exports = {
+  getCards,
+  createNewCard,
+  addLikeCard,
+  removeLikeCard,
+  deleteCard,
 };
