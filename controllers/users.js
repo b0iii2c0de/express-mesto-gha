@@ -73,10 +73,9 @@ function login(req, res, next) {
 
       return res.send({ _id: token });
     })
-    .catch(() => {
-      throw new AuthenticationError('Неправильная почта или пароль');
-    })
-    .catch(next);
+    .catch((err) => {
+      next(err);
+    });
 }
 
 // Получение пользователей из базы данных mongodb

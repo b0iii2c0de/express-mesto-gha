@@ -14,7 +14,7 @@
     "Express.js",
     "MongoDB"
   ],
-  "author": "",
+  "author": "c0de b0iii",
   "license": "ISC",
   "dependencies": {
     "express": "^4.18.2",
